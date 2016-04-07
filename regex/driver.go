@@ -9,7 +9,7 @@ import (
 )
 
 func RunBenchmark(matcher func(string) bool, name string) {
-	f, err := os.Create(fmt.Sprint("%.prof", name))
+	f, err := os.Create(fmt.Sprint("%s.prof", name))
 	if err != nil {
 		log.Fatal(err)
 	}
