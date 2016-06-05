@@ -8,9 +8,8 @@ import (
 //var regex = regexp.MustCompile(".*#[15][15]1110+$")
 var pattern = pcre.MustCompile("^[^#]*#[15][15]1110+$", 0)
 
-
 func main() {
-	regex.RunBenchmark(func(line string) bool {
-		return pattern.MatcherString(line, 0).Matches()
+	regex.RunBenchmark(func(line *string) bool {
+		return pattern.MatcherString(*line, 0).Matches()
 	}, "pcre")
 }

@@ -1,19 +1,20 @@
 package regex
+
 import (
-	"fmt"
-	"time"
 	"bufio"
+	"fmt"
 	"log"
 	"os"
 	"runtime/pprof"
+	"time"
 )
 
-func RunBenchmark(matcher func(string) bool, name string) {
+func RunBenchmark(matcher func(*string) bool, name string) {
 	f, err := os.Create(fmt.Sprintf("%s.prof", name))
 	if err != nil {
 		log.Fatal(err)
 	}
- 	pprof.StartCPUProfile(f)
+	pprof.StartCPUProfile(f)
 	defer pprof.StopCPUProfile()
 
 	start := time.Now()
@@ -23,14 +24,11 @@ func RunBenchmark(matcher func(string) bool, name string) {
 		log.Fatal("Error opening input file:", err)
 	}
 	defer inputFile.Close()
-	reader := bufio.NewReaderSize(bufio.NewReader(inputFile), 1 << 20) // 1mb
-	for line, err := reader.ReadString('\n'); err==nil;
-		line, err = reader.ReadString('\n'){
-		if matcher(line) {
-			fmt.Printf("Match: %v\n", string(line))
+	reader := bufio.NewReaderSize(bufio.NewReader(inputFile), 1<<20) // 1mb
+	for line, err := reader.ReadString('\n'); err == nil; line, err = reader.ReadString('\n') {
+		if matcher(&line) {
+			fmt.Printf("Match: %v\n", line)
 		}
 	}
 	fmt.Printf("Elapsed time: %v\n", time.Since(start))
 }
-
-
