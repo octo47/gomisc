@@ -49,6 +49,21 @@ func (g *Graph) AddVertex() int {
 	return len(g.edges) - 1
 }
 
+func (g *Graph) AddVertexes(count int) {
+	for i := 0; i < count; i++ {
+		g.edges = append(g.edges, make([]edge, 0))
+	}
+}
+
+func (g *Graph) DelEdge(from int, to int) {
+	for idx, edge := range g.edges[from] {
+		if edge.target == to {
+			a := g.edges[from]
+			g.edges[from] = append(a[:idx], a[idx+1:]...)
+		}
+	}
+}
+
 func (g *Graph) AddEdge(vertex1 int, vertex2 int, cost int, bidir bool) {
 	g.edges[vertex1] = append(g.edges[vertex1], edge{target: vertex2, cost: cost})
 	if bidir {

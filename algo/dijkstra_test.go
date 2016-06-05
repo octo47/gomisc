@@ -16,16 +16,30 @@ func TestSimplePath(t *testing.T) {
 	graph.AddEdge(v1, v3, 2, false)
 	graph.AddEdge(v2, v3, -2, false)
 
-	path, err := graph.Dijkstra(v1)
-	if err != nil {
-		t.Error(err)
+	{
+		path, err := graph.Dijkstra(v1)
+		if err != nil {
+			t.Error(err)
+		}
+
+		if pathTo3 := path.BuildPath(v3); !reflect.DeepEqual(pathTo3, []int{2, 1, 0}) {
+			t.Error("Wrong path calculated", pathTo3, path)
+		}
+
+		if cost := path.PathCost(v3); cost != 1 {
+			t.Error("Wrong path cost calculated", path)
+		}
 	}
 
-	if pathTo3 := path.BuildPath(v3); !reflect.DeepEqual(pathTo3, []int{2, 1, 0}) {
-		t.Error("Wrong path calculated", path)
-	}
+	graph.DelEdge(v2, v3)
+	{
+		path, err := graph.Dijkstra(v1)
+		if err != nil {
+			t.Error(err)
+		}
 
-	if cost := path.PathCost(v3); cost != 1 {
-		t.Error("Wrong path cost calculated", path)
+		if pathTo3 := path.BuildPath(v3); !reflect.DeepEqual(pathTo3, []int{2, 0}) {
+			t.Error("Wrong path calculated", pathTo3, path)
+		}
 	}
 }
