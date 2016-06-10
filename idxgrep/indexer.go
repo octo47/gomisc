@@ -15,10 +15,11 @@ import (
 
 type Indexer interface {
 	Index(document *Data)
+	Close() error
 }
 
 const (
-	chunkSize   = 1 << 16
+	chunkSize   = 1 << 22
 	channelSize = 4
 )
 

@@ -15,6 +15,7 @@ import (
 var (
 	indexPath  = flag.String("index", "", "index path")
 	cpuProfile = flag.String("cpuprofile", "", "write cpu profile to file")
+	engine     = flag.String("engine", "bleve", "Indexer engine to use [bleve]")
 )
 
 func main() {
@@ -36,7 +37,13 @@ func main() {
 		log.Fatal("expected at least one file to index")
 	}
 
-	indexer := idxgrep.NewBleveIndexer(*indexPath)
+	var indexer idxgrep.Indexer
+	switch *engine {
+	case "bleve":
+		indexer = idxgrep.NewBleveIndexer(*indexPath)
+	default:
+		log.Fatalln("Unknown indexing enging", *engine)
+	}
 
 	defer func() {
 		cerr := indexer.Close()
