@@ -3,7 +3,9 @@ package idxgrep
 import (
 	"github.com/blevesearch/bleve"
 	_ "github.com/blevesearch/bleve/index/firestorm"
-	_ "github.com/blevesearch/bleve/index/store/goleveldb"
+	_ "github.com/blevesearch/blevex/cznicb"
+	_ "github.com/blevesearch/blevex/leveldb"
+	_ "github.com/blevesearch/blevex/rocksdb"
 	"github.com/golang/glog"
 )
 
@@ -11,9 +13,9 @@ type BleveIndexer struct {
 	index bleve.Index
 }
 
-func NewBleveIndexer(path string) *BleveIndexer {
+func NewBleveIndexer(path string, store string) *BleveIndexer {
 	return &BleveIndexer{
-		index: openIndex(path),
+		index: openIndex(path, store),
 	}
 }
 
@@ -43,14 +45,14 @@ func buildIndexMapping() *bleve.IndexMapping {
 	return indexMapping
 }
 
-func openIndex(path string) bleve.Index {
+func openIndex(path string, engine string) bleve.Index {
 	glog.Info("Opening index ", path)
 	index, err := bleve.Open(path)
 	if err == bleve.ErrorIndexPathDoesNotExist {
 		glog.Infof("Creating new index...")
 		// create a mapping
 		indexMapping := buildIndexMapping()
-		index, err = bleve.NewUsing(path, indexMapping, "upside_down", "goleveldb", nil)
+		index, err = bleve.NewUsing(path, indexMapping, "upside_down", engine, nil)
 		if err != nil {
 			glog.Fatal(err)
 		}
