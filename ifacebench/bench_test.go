@@ -21,8 +21,8 @@ type iteratorImpl struct {
 	size  int
 }
 
-func newIterator(size int) iteratorImpl {
-	return iteratorImpl{index: 0, size: size}
+func newIterator(size int) Iterator {
+	return &iteratorImpl{index: 0, size: size}
 }
 
 func (i *iteratorImpl) AtEnd() bool {
@@ -51,32 +51,77 @@ func init() {
 	}
 }
 
-var ts uint64
-var val float64
+var tsMax uint64
+var valSum float64
+
+func validate(b *testing.B) {
+	if tsMax != 9159759876629959426 {
+		b.FailNow()
+	}
+	if uint64(valSum) != 30 {
+		b.FailNow()
+	}
+}
 
 func BenchmarkInteface(b *testing.B) {
 	for i := 0; i < b.N; i++ {
+		tsMax = 0
+		valSum = 0.0
 		for iterator := newIterator(len(fixture)); !iterator.AtEnd(); iterator.Next() {
-			ts, val = iterator.Value()
+			ts, val := iterator.Value()
+			if ts > tsMax {
+				tsMax = ts
+			}
+			valSum += val
 		}
+		validate(b)
+	}
+}
+
+func BenchmarkIntefaceStruct(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		tsMax = 0
+		valSum = 0.0
+		it := newIterator(len(fixture)).(*iteratorImpl)
+		for iterator := it; !iterator.AtEnd(); iterator.Next() {
+			ts, val := iterator.Value()
+			if ts > tsMax {
+				tsMax = ts
+			}
+			valSum += val
+		}
+		validate(b)
 	}
 }
 
 func BenchmarkDirect(b *testing.B) {
 	for i := 0; i < b.N; i++ {
+		tsMax = 0
+		valSum = 0.0
 		for idx := 0; idx < len(fixture); idx++ {
-			ts, val = fixture[idx].timestamp, fixture[idx].value
+			ts, val := fixture[idx].timestamp, fixture[idx].value
+			if ts > tsMax {
+				tsMax = ts
+			}
+			valSum += val
 		}
+		validate(b)
 	}
 }
 
 func BenchmarkCallback(b *testing.B) {
-	cb := func(pts uint64, pval float64) {
-		ts, val = pts, pval
+	cb := func(ts uint64, val float64) {
+		if ts > tsMax {
+			tsMax = ts
+		}
+		valSum += val
 	}
 	for i := 0; i < b.N; i++ {
+		tsMax = 0
+		valSum = 0.0
 		for idx := 0; idx < len(fixture); idx++ {
 			cb(fixture[idx].timestamp, fixture[idx].value)
 		}
 	}
+	validate(b)
 }
