@@ -32,22 +32,41 @@ func (i *iteratorImpl) Next() {
 }
 
 func (i *iteratorImpl) Value() (timestamp uint64, value float64) {
-	idx := i.index % len(fixture)
-	return getTimestamp(idx), getValue(idx)
+	return getTimestamp(i.index), getValue(i.index)
 }
 
-var fixtureSize = 1 << 12
-var fixture []byte
-var useUnsafe bool
+type point struct {
+	timestamp uint64
+	value     float64
+}
 
-func newFixture(b *testing.B, size int, unsafe bool) {
-	fixture = make([]byte, size*16)
-	useUnsafe = unsafe
+const (
+	Encoded = 1
+	Unsafe  = 2
+	Struct  = 3
+)
+
+type fixtureDef struct {
+	size       int
+	encoded    int
+	bytesData  []byte
+	structData []point
+}
+
+var fixtureSize = 1024 * 1024
+
+var fixture = fixtureDef{
+	size:       fixtureSize,
+	bytesData:  make([]byte, fixtureSize*16),
+	structData: make([]point, fixtureSize),
+}
+
+func newFixture(b *testing.B, fixtureType int) {
 	rnd := rand.New(rand.NewSource(1234))
-	flen := fixtureLen()
+	fixture.encoded = fixtureType
 	tsMaxExpected = 0
 	valSumExpected = 0.0
-	for i := 0; i < flen; i++ {
+	for i := 0; i < fixture.size; i++ {
 		ts := uint64(rnd.Int63())
 		if ts > tsMaxExpected {
 			tsMaxExpected = ts
@@ -65,48 +84,62 @@ func newFixture(b *testing.B, size int, unsafe bool) {
 	}
 }
 
-func fixtureLen() int {
-	return len(fixture) / 16
-}
-
 func getTimestamp(idx int) uint64 {
-	bidx := idx * 16
-	if useUnsafe {
-		return *(*uint64)(unsafe.Pointer(&fixture[bidx]))
+	switch fixture.encoded {
+	case Encoded:
+		bidx := idx * 16
+		return binary.LittleEndian.Uint64(fixture.bytesData[bidx:])
+	case Unsafe:
+		bidx := idx * 16
+		return *(*uint64)(unsafe.Pointer(&fixture.bytesData[bidx]))
+	case Struct:
+		return fixture.structData[idx].timestamp
+	default:
+		panic("Unknown type")
 	}
-	return binary.LittleEndian.Uint64(fixture[bidx:])
 }
 
 func getValue(idx int) float64 {
-	bidx := idx*16 + 8
-	if useUnsafe {
-		return *(*float64)(unsafe.Pointer(&fixture[bidx]))
+	switch fixture.encoded {
+	case Encoded:
+		bidx := idx*16 + 8
+		return math.Float64frombits(
+			binary.LittleEndian.Uint64(fixture.bytesData[bidx:]))
+	case Unsafe:
+		bidx := idx*16 + 8
+		return *(*float64)(unsafe.Pointer(&fixture.bytesData[bidx]))
+	case Struct:
+		return fixture.structData[idx].value
+	default:
+		panic("Unknown type")
 	}
-	return math.Float64frombits(binary.LittleEndian.Uint64(fixture[bidx:]))
 }
 
 func setTimestamp(idx int, val uint64) {
-	bidx := idx * 16
-	if cap(fixture) < bidx+16 {
-		fixture = append(fixture, 16)
-	}
-	if useUnsafe {
-		*(*uint64)(unsafe.Pointer(&fixture[bidx])) = val
-	} else {
-		binary.LittleEndian.PutUint64(fixture[bidx:], val)
+	switch fixture.encoded {
+	case Encoded:
+		bidx := idx * 16
+		binary.LittleEndian.PutUint64(fixture.bytesData[bidx:], val)
+	case Unsafe:
+		bidx := idx * 16
+		*(*uint64)(unsafe.Pointer(&fixture.bytesData[bidx])) = val
+	case Struct:
+		fixture.structData[idx].timestamp = val
 	}
 }
 
 func setValue(idx int, val float64) {
-	bidx := idx * 16
-	if cap(fixture) < bidx+16 {
-		fixture = append(fixture, 16)
-	}
-	bidx += 8
-	if useUnsafe {
-		*(*uint64)(unsafe.Pointer(&fixture[bidx])) = math.Float64bits(val)
-	} else {
-		binary.LittleEndian.PutUint64(fixture[bidx:], math.Float64bits(val))
+	switch fixture.encoded {
+	case Encoded:
+		bidx := idx*16 + 8
+		binary.LittleEndian.PutUint64(
+			fixture.bytesData[bidx:], math.Float64bits(val))
+	case Unsafe:
+		bidx := idx*16 + 8
+		*(*uint64)(unsafe.Pointer(
+			&fixture.bytesData[bidx])) = math.Float64bits(val)
+	case Struct:
+		fixture.structData[idx].value = val
 	}
 }
 
@@ -125,46 +158,53 @@ func validate(b *testing.B) {
 }
 
 func BenchmarkIntefaceEncoder(b *testing.B) {
-	benchmarkInteface(b, false)
+	benchmarkInteface(b, Encoded)
 }
 
 func BenchmarkIntefaceUnsafe(b *testing.B) {
-	benchmarkInteface(b, true)
+	benchmarkInteface(b, Unsafe)
 }
 
-func benchmarkInteface(b *testing.B, useUnsafe bool) {
+func BenchmarkIntefaceStruct(b *testing.B) {
+	benchmarkInteface(b, Struct)
+}
+
+func benchmarkInteface(b *testing.B, fixtureType int) {
 	b.StopTimer()
-	newFixture(b, fixtureSize, useUnsafe)
+	newFixture(b, fixtureType)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		tsMax = 0
 		valSum = 0.0
-		for iterator := newIterator(fixtureLen()); !iterator.AtEnd(); iterator.Next() {
+		for iterator := newIterator(fixture.size); !iterator.AtEnd(); iterator.Next() {
 			ts, val := iterator.Value()
 			if ts > tsMax {
 				tsMax = ts
 			}
 			valSum += val
 		}
-		validate(b)
 	}
+	validate(b)
 }
 
 func BenchmarkIntefaceStructEncoder(b *testing.B) {
-	benchmarkIntefaceStruct(b, false)
+	benchmarkIntefaceStruct(b, Encoded)
 }
 func BenchmarkIntefaceStructUnsafe(b *testing.B) {
-	benchmarkIntefaceStruct(b, true)
+	benchmarkIntefaceStruct(b, Unsafe)
+}
+func BenchmarkIntefaceStructStruct(b *testing.B) {
+	benchmarkIntefaceStruct(b, Struct)
 }
 
-func benchmarkIntefaceStruct(b *testing.B, useUnsafe bool) {
+func benchmarkIntefaceStruct(b *testing.B, fixtureType int) {
 	b.StopTimer()
-	newFixture(b, fixtureSize, useUnsafe)
+	newFixture(b, fixtureType)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		tsMax = 0
 		valSum = 0.0
-		it := newIterator(fixtureLen()).(*iteratorImpl)
+		it := newIterator(fixture.size).(*iteratorImpl)
 		for iterator := it; !iterator.AtEnd(); iterator.Next() {
 			ts, val := iterator.Value()
 			if ts > tsMax {
@@ -172,57 +212,67 @@ func benchmarkIntefaceStruct(b *testing.B, useUnsafe bool) {
 			}
 			valSum += val
 		}
-		validate(b)
 	}
+	validate(b)
 }
 
 func BenchmarkDirectEncoder(b *testing.B) {
-	benchmarkDirect(b, false)
+	benchmarkDirect(b, Encoded)
 }
 
 func BenchmarkDirectUnsafe(b *testing.B) {
-	benchmarkDirect(b, true)
+	benchmarkDirect(b, Unsafe)
 }
 
-func benchmarkDirect(b *testing.B, useUnsafe bool) {
+func BenchmarkDirectStruct(b *testing.B) {
+	benchmarkDirect(b, Struct)
+}
+
+func benchmarkDirect(b *testing.B, fixtureType int) {
 	b.StopTimer()
-	newFixture(b, fixtureSize, useUnsafe)
+	newFixture(b, fixtureType)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		tsMax = 0
 		valSum = 0.0
-		for idx := 0; idx < fixtureLen(); idx++ {
+		for idx := 0; idx < fixture.size; idx++ {
 			ts, val := getTimestamp(idx), getValue(idx)
 			if ts > tsMax {
 				tsMax = ts
 			}
 			valSum += val
 		}
-		validate(b)
 	}
+	validate(b)
+}
+
+var cb = func(ts uint64, val float64) {
+	if ts > tsMax {
+		tsMax = ts
+	}
+	valSum += val
 }
 
 func BenchmarkCallbackEncoder(b *testing.B) {
-	benchmarkCallback(b, false)
+	benchmarkCallback(b, cb, Encoded)
 }
 func BenchmarkCallbackUnsafe(b *testing.B) {
-	benchmarkCallback(b, true)
+	benchmarkCallback(b, cb, Unsafe)
+}
+func BenchmarkCallbackStruct(b *testing.B) {
+	benchmarkCallback(b, cb, Struct)
 }
 
-func benchmarkCallback(b *testing.B, useUnsafe bool) {
+func benchmarkCallback(
+	b *testing.B, cb func(ts uint64, val float64), fixtureType int) {
 	b.StopTimer()
-	newFixture(b, fixtureSize, useUnsafe)
-	cb := func(ts uint64, val float64) {
-		if ts > tsMax {
-			tsMax = ts
-		}
-		valSum += val
-	}
+	newFixture(b, fixtureType)
+
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		tsMax = 0
 		valSum = 0.0
-		for idx := 0; idx < fixtureLen(); idx++ {
+		for idx := 0; idx < fixture.size; idx++ {
 			cb(getTimestamp(idx), getValue(idx))
 		}
 	}
