@@ -104,6 +104,14 @@ func getTuple(idx int) (ts uint64, val float64, nextOffset int) {
 	case Struct:
 		ts, val = fixture.structData[idx].timestamp, fixture.structData[idx].value
 		nextOffset = idx + 1
+	case Leb128:
+		var len int
+		ts, len = decodeLeb128(fixture.bytesData[idx:])
+		nextOffset = idx + len
+		var v uint64
+		v, len = decodeLeb128(fixture.bytesData[idx+len:])
+		val = math.Float64frombits(v)
+		nextOffset += len
 	default:
 		panic("Unknown type")
 	}
@@ -138,6 +146,11 @@ func addTuple(ts uint64, val float64) int {
 		offset := len(fixture.structData)
 		fixture.structData = append(fixture.structData, point{ts, val})
 		return offset
+	case Leb128:
+		offset := len(fixture.bytesData)
+		fixture.bytesData = encodeLeb128(fixture.bytesData, ts)
+		fixture.bytesData = encodeLeb128(fixture.bytesData, math.Float64bits(val))
+		return offset
 	default:
 		panic("Unknown tuple type")
 	}
@@ -169,7 +182,7 @@ func popcount(x uint64) int {
 	return int((x * h01) >> 56)    //returns left 8 bits of x + (x<<8) + (x<<16) + (x<<24) + ...
 }
 
-func encodeLeb128(buf []byte, v uint64) int {
+func encodeLeb128(buf []byte, v uint64) []byte {
 	var b [9]byte
 	b[1] = byte(v)
 	b[2] = byte(v >> 8)
@@ -179,26 +192,25 @@ func encodeLeb128(buf []byte, v uint64) int {
 	b[6] = byte(v >> 40)
 	b[7] = byte(v >> 48)
 	b[8] = byte(v >> 56)
-	var i = 0
-	for i = 8; i >= 0; i-- {
+	var i int
+	for i = 8; i > 0; i-- {
 		if b[i] != 0 {
 			break
 		}
 	}
-	b[0] = byte(i - 1)
-	return i
+	b[0] = byte(i)
+	return append(buf, b[:i+1]...)
 }
 
 func decodeLeb128(buf []byte) (uint64, int) {
 	len := int(buf[0])
 	var v uint64
+	shift := uint32(0)
 	for i := 1; i <= len; i++ {
-		if i != 1 {
-			v <<= 8
-		}
-		v |= uint64(buf[i])
+		v += uint64(buf[i]) << shift
+		shift += 8
 	}
-	return v, len
+	return v, len + 1
 }
 
 var tsMax uint64
@@ -223,6 +235,10 @@ func BenchmarkIntefaceUnsafe(b *testing.B) {
 
 func BenchmarkIntefaceStruct(b *testing.B) {
 	benchmarkInteface(b, Struct)
+}
+
+func BenchmarkIntefaceLeb128(b *testing.B) {
+	benchmarkInteface(b, Leb128)
 }
 
 func benchmarkInteface(b *testing.B, fixtureType int) {
@@ -251,6 +267,10 @@ func BenchmarkIntefaceStructUnsafe(b *testing.B) {
 }
 func BenchmarkIntefaceStructStruct(b *testing.B) {
 	benchmarkIntefaceStruct(b, Struct)
+}
+
+func BenchmarkIntefaceStructLeb128(b *testing.B) {
+	benchmarkIntefaceStruct(b, Leb128)
 }
 
 func benchmarkIntefaceStruct(b *testing.B, fixtureType int) {
@@ -282,6 +302,10 @@ func BenchmarkDirectUnsafe(b *testing.B) {
 
 func BenchmarkDirectStruct(b *testing.B) {
 	benchmarkDirect(b, Struct)
+}
+
+func BenchmarkDirectLeb128(b *testing.B) {
+	benchmarkDirect(b, Leb128)
 }
 
 func benchmarkDirect(b *testing.B, fixtureType int) {
@@ -319,6 +343,9 @@ func BenchmarkCallbackUnsafe(b *testing.B) {
 }
 func BenchmarkCallbackStruct(b *testing.B) {
 	benchmarkCallback(b, cb, Struct)
+}
+func BenchmarkCallbackLeb128(b *testing.B) {
+	benchmarkCallback(b, cb, Leb128)
 }
 
 func benchmarkCallback(
