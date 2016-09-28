@@ -15,24 +15,29 @@ type Iterator interface {
 }
 
 type iteratorImpl struct {
-	index int
-	size  int
+	toGo       int
+	nextOffset int
+	nextTs     uint64
+	nextValue  float64
 }
 
 func newIterator(size int) Iterator {
-	return &iteratorImpl{index: 0, size: size}
+	return &iteratorImpl{toGo: size}
 }
 
 func (i *iteratorImpl) AtEnd() bool {
-	return i.index >= i.size
+	return i.toGo < 0
 }
 
 func (i *iteratorImpl) Next() {
-	i.index++
+	if i.toGo > 0 {
+		i.nextTs, i.nextValue, i.nextOffset = getTuple(i.nextOffset)
+	}
+	i.toGo--
 }
 
-func (i *iteratorImpl) Value() (timestamp uint64, value float64) {
-	return getTimestamp(i.index), getValue(i.index)
+func (i *iteratorImpl) Value() (uint64, float64) {
+	return i.nextTs, i.nextValue
 }
 
 type point struct {
@@ -44,116 +49,167 @@ const (
 	Encoded = 1
 	Unsafe  = 2
 	Struct  = 3
+	Leb128  = 4
 )
 
 type fixtureDef struct {
-	size       int
-	encoded    int
-	bytesData  []byte
-	structData []point
+	size           int
+	encoded        int
+	tsMaxExpected  uint64
+	valSumExpected float64
+	bytesData      []byte
+	structData     []point
 }
 
 var fixtureSize = 1024 * 1024
 
-var fixture = fixtureDef{
-	size:       fixtureSize,
-	bytesData:  make([]byte, fixtureSize*16),
-	structData: make([]point, fixtureSize),
-}
+var fixture fixtureDef
 
 func newFixture(b *testing.B, fixtureType int) {
 	rnd := rand.New(rand.NewSource(1234))
-	fixture.encoded = fixtureType
-	tsMaxExpected = 0
-	valSumExpected = 0.0
-	for i := 0; i < fixture.size; i++ {
+	fixture = fixtureDef{
+		encoded:        fixtureType,
+		size:           0,
+		tsMaxExpected:  0,
+		valSumExpected: 0.0,
+		bytesData:      make([]byte, 0),
+		structData:     make([]point, 0),
+	}
+
+	for i := 0; i < fixtureSize; i++ {
 		ts := uint64(rnd.Int63())
-		if ts > tsMaxExpected {
-			tsMaxExpected = ts
-		}
 		val := rnd.Float64()
-		valSumExpected += val
-		setTimestamp(i, ts)
-		if getTimestamp(i) != ts {
-			b.Fatalf("Mismatched stored timestamps %v <> %v", ts, getTimestamp(i))
+		offset := addTuple(ts, val)
+		rts, rval, _ := getTuple(offset)
+		if rts != ts {
+			b.Fatalf("Mismatched stored timestamps %v <> %v at %d", rts, ts, offset)
 		}
-		setValue(i, val)
-		if getValue(i) != val {
-			b.Fatalf("Mismatched stored values %v <> %v", ts, getValue(i))
+		if rval != val {
+			b.Fatalf("Mismatched stored values %v <> %v at %d", rval, val, offset)
 		}
 	}
 }
 
-func getTimestamp(idx int) uint64 {
+func getTuple(idx int) (ts uint64, val float64, nextOffset int) {
 	switch fixture.encoded {
 	case Encoded:
-		bidx := idx * 16
-		return binary.LittleEndian.Uint64(fixture.bytesData[bidx:])
+		ts = binary.LittleEndian.Uint64(fixture.bytesData[idx : idx+8])
+		val = math.Float64frombits(
+			binary.LittleEndian.Uint64(fixture.bytesData[idx+8 : idx+16]))
+		nextOffset = idx + 16
 	case Unsafe:
-		bidx := idx * 16
-		return *(*uint64)(unsafe.Pointer(&fixture.bytesData[bidx]))
+		ts = *(*uint64)(unsafe.Pointer(&fixture.bytesData[idx]))
+		val = *(*float64)(unsafe.Pointer(&fixture.bytesData[idx+8]))
+		nextOffset = idx + 16
 	case Struct:
-		return fixture.structData[idx].timestamp
+		ts, val = fixture.structData[idx].timestamp, fixture.structData[idx].value
+		nextOffset = idx + 1
 	default:
 		panic("Unknown type")
 	}
+	return
 }
 
-func getValue(idx int) float64 {
-	switch fixture.encoded {
-	case Encoded:
-		bidx := idx*16 + 8
-		return math.Float64frombits(
-			binary.LittleEndian.Uint64(fixture.bytesData[bidx:]))
-	case Unsafe:
-		bidx := idx*16 + 8
-		return *(*float64)(unsafe.Pointer(&fixture.bytesData[bidx]))
-	case Struct:
-		return fixture.structData[idx].value
-	default:
-		panic("Unknown type")
+func addTuple(ts uint64, val float64) int {
+	fixture.size++
+	if ts > fixture.tsMaxExpected {
+		fixture.tsMaxExpected = ts
 	}
-}
-
-func setTimestamp(idx int, val uint64) {
+	fixture.valSumExpected += val
+	var buf [8]byte
 	switch fixture.encoded {
 	case Encoded:
-		bidx := idx * 16
-		binary.LittleEndian.PutUint64(fixture.bytesData[bidx:], val)
-	case Unsafe:
-		bidx := idx * 16
-		*(*uint64)(unsafe.Pointer(&fixture.bytesData[bidx])) = val
-	case Struct:
-		fixture.structData[idx].timestamp = val
-	}
-}
-
-func setValue(idx int, val float64) {
-	switch fixture.encoded {
-	case Encoded:
-		bidx := idx*16 + 8
+		offset := len(fixture.bytesData)
+		binary.LittleEndian.PutUint64(buf[:], ts)
+		fixture.bytesData = append(fixture.bytesData, buf[:]...)
 		binary.LittleEndian.PutUint64(
-			fixture.bytesData[bidx:], math.Float64bits(val))
+			buf[:], math.Float64bits(val))
+		fixture.bytesData = append(fixture.bytesData, buf[:]...)
+		return offset
 	case Unsafe:
-		bidx := idx*16 + 8
+		offset := len(fixture.bytesData)
+		*(*uint64)(unsafe.Pointer(&buf[0])) = ts
+		fixture.bytesData = append(fixture.bytesData, buf[:]...)
 		*(*uint64)(unsafe.Pointer(
-			&fixture.bytesData[bidx])) = math.Float64bits(val)
+			&buf[0])) = math.Float64bits(val)
+		fixture.bytesData = append(fixture.bytesData, buf[:]...)
+		return offset
 	case Struct:
-		fixture.structData[idx].value = val
+		offset := len(fixture.structData)
+		fixture.structData = append(fixture.structData, point{ts, val})
+		return offset
+	default:
+		panic("Unknown tuple type")
 	}
+}
+
+const (
+	m1  = uint64(0x5555555555555555)
+	m2  = uint64(0x3333333333333333)
+	m4  = uint64(0x0F0F0F0F0F0F0F0F)
+	h01 = uint64(0x0101010101010101)
+)
+
+func bitlen64(a uint64) int {
+	a |= a >> 1
+	a |= a >> 2
+	a |= a >> 4
+	a |= a >> 8
+	a |= a >> 16
+	a |= a >> 32
+	return popcount(a)
+}
+
+// using mult based hamming code (number of '1' in a bit string)
+// https://en.wikipedia.org/wiki/Hamming_weight
+func popcount(x uint64) int {
+	x -= (x >> 1) & m1             //put count of each 2 bits into those 2 bits
+	x = (x & m2) + ((x >> 2) & m2) //put count of each 4 bits into those 4 bits
+	x = (x + (x >> 4)) & m4        //put count of each 8 bits into those 8 bits
+	return int((x * h01) >> 56)    //returns left 8 bits of x + (x<<8) + (x<<16) + (x<<24) + ...
+}
+
+func encodeLeb128(buf []byte, v uint64) int {
+	var b [9]byte
+	b[1] = byte(v)
+	b[2] = byte(v >> 8)
+	b[3] = byte(v >> 16)
+	b[4] = byte(v >> 24)
+	b[5] = byte(v >> 32)
+	b[6] = byte(v >> 40)
+	b[7] = byte(v >> 48)
+	b[8] = byte(v >> 56)
+	var i = 0
+	for i = 8; i >= 0; i-- {
+		if b[i] != 0 {
+			break
+		}
+	}
+	b[0] = byte(i - 1)
+	return i
+}
+
+func decodeLeb128(buf []byte) (uint64, int) {
+	len := int(buf[0])
+	var v uint64
+	for i := 1; i <= len; i++ {
+		if i != 1 {
+			v <<= 8
+		}
+		v |= uint64(buf[i])
+	}
+	return v, len
 }
 
 var tsMax uint64
-var tsMaxExpected uint64
 var valSum float64
-var valSumExpected float64
 
 func validate(b *testing.B) {
-	if tsMax != tsMaxExpected {
-		b.Fatalf("Mismatched %v <> %v \n", tsMax, tsMaxExpected)
+	if tsMax != fixture.tsMaxExpected {
+		b.Fatalf("Mismatched %v <> %v \n", tsMax, fixture.tsMaxExpected)
 	}
-	if valSum != valSumExpected {
-		b.Fatalf("Mismatched %v <> %v \n", valSum, valSumExpected)
+	if valSum != fixture.valSumExpected {
+		b.Fatalf("Mismatched %v <> %v \n", valSum, fixture.valSumExpected)
 	}
 }
 
@@ -235,8 +291,10 @@ func benchmarkDirect(b *testing.B, fixtureType int) {
 	for i := 0; i < b.N; i++ {
 		tsMax = 0
 		valSum = 0.0
+		nextOffset := 0
 		for idx := 0; idx < fixture.size; idx++ {
-			ts, val := getTimestamp(idx), getValue(idx)
+			ts, val, noff := getTuple(nextOffset)
+			nextOffset = noff
 			if ts > tsMax {
 				tsMax = ts
 			}
@@ -272,8 +330,11 @@ func benchmarkCallback(
 	for i := 0; i < b.N; i++ {
 		tsMax = 0
 		valSum = 0.0
+		nextOffset := 0
 		for idx := 0; idx < fixture.size; idx++ {
-			cb(getTimestamp(idx), getValue(idx))
+			ts, val, noff := getTuple(nextOffset)
+			nextOffset = noff
+			cb(ts, val)
 		}
 	}
 	validate(b)
