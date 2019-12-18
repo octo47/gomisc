@@ -1,10 +1,10 @@
-package algo_test
+package dijkstra_test
 
 import (
 	"reflect"
 	"testing"
 
-	"github.com/octo47/gomisc/algo"
+	algo "github.com/octo47/gomisc/algo/dijkstra"
 )
 
 func TestSimplePath(t *testing.T) {

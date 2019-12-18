@@ -1,9 +1,9 @@
-package algo_test
+package dijkstra_test
 
 import (
 	"testing"
 
-	"github.com/octo47/gomisc/algo"
+	algo "github.com/octo47/gomisc/algo/dijkstra"
 )
 
 func TestSimpleStack(t *testing.T) {

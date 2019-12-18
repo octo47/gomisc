@@ -1,4 +1,4 @@
-package algo
+package dijkstra
 
 import (
 	"math"
